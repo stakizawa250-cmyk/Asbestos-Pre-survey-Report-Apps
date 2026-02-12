@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>アスベスト事前報告書DX</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    
+    <!-- Babel -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    
+    <!-- html2pdf.js -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700;900&display=swap" rel="stylesheet">
+
+    <style>
+        body {
+            font-family: 'Noto Sans JP', sans-serif;
+            background-color: #f8fafc;
+            color: #0f172a;
+            -webkit-tap-highlight-color: transparent;
+        }
+        
+        .animate-in { animation: fade-in 0.3s ease-out; }
+        @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+        input, select, textarea { font-size: 16px !important; }
+
+        /* 帳票スタイル (PDF/印刷用) - A4フル活用版 */
+        .report-grid {
+            display: grid;
+            grid-template-columns: 140px 1fr; /* ラベル幅 */
+            border-bottom: 1px solid #94a3b8; /* 罫線を少し濃く */
+        }
+        .report-grid-label {
+            background-color: #f1f5f9;
+            padding: 4px 8px;
+            font-weight: 700;
+            font-size: 10pt; /* フォントサイズ調整 */
+            color: #334155;
+            display: flex;
+            align-items: center;
+            border-right: 1px solid #94a3b8;
+            line-height: 1.3;
+        }
+        .report-grid-value {
+            padding: 4px 8px;
+            font-size: 10pt;
+            color: #0f172a;
+            display: flex;
+            align-items: center;
+            min-height: 28px;
+            line-height: 1.4;
+        }
+
+        /* 画面外レンダリング用 (PDF生成元) */
+        .off-screen-render {
+            position: fixed;
+            left: -10000px;
+            top: 0;
+            width: 210mm; /* A4幅 */
+            z-index: -1;
+        }
+
+        /* 印刷用スタイル */
+        @media print {
+            @page { size: A4; margin: 0; }
+            body { background: white !important; padding: 0 !important; }
+            .no-print, header, footer, button, .input-container { display: none !important; }
+            
+            .off-screen-render {
+                position: static !important;
+                left: 0 !important;
+                top: 0 !important;
+                width: 100% !important;
+                display: block !important;
+                margin: 0 !important;
+            }
+            
+            .report-sheet {
+                width: 100% !important;
+                box-shadow: none !important;
+                padding: 10mm !important;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // --- Icons ---
+        const IconBase = ({ children, className, ...props }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`w-5 h-5 ${className}`} {...props}>
+                {children}
+            </svg>
+        );
+        const Building2 = (props) => <IconBase {...props}><path d="M6 22V4a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v18Z"/><path d="M6 12H4a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2"/><path d="M18 9h2a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-2"/><path d="M10 6h4"/><path d="M10 10h4"/><path d="M10 14h4"/><path d="M10 18h4"/></IconBase>;
+        const FileText = (props) => <IconBase {...props}><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><line x1="10" y1="9" x2="8" y2="9"/></IconBase>;
+        const Clipboard = (props) => <IconBase {...props}><rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/></IconBase>;
+        const Download = (props) => <IconBase {...props}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></IconBase>;
+        const CheckCircle2 = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></IconBase>;
+        const Check = (props) => <IconBase {...props}><polyline points="20 6 9 17 4 12"/></IconBase>;
+        const AlertCircle = (props) => <IconBase {...props}><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></IconBase>;
+        const HardHat = (props) => <IconBase {...props}><path d="M2 18a1 1 0 0 0 1 1h18a1 1 0 0 0 1-1v-2a1 1 0 0 0-1-1H3a1 1 0 0 0-1 1v2z"/><path d="M10 10V5a1 1 0 0 1 1-1h2a1 1 0 0 1 1 1v5"/><path d="M4 15v-3a6 6 0 0 1 6-6h0"/><path d="M14 6h0a6 6 0 0 1 6 6v3"/></IconBase>;
+        const Printer = (props) => <IconBase {...props}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/></IconBase>;
+        const ChevronDown = (props) => <IconBase {...props}><path d="m6 9 6 6 6-6"/></IconBase>;
+        const ChevronUp = (props) => <IconBase {...props}><path d="m18 15-6-6-6 6"/></IconBase>;
+
+        const Section = ({ title, icon: Icon, colorClass, children, isOpenDefault = true }) => {
+            const [isOpen, setIsOpen] = useState(isOpenDefault);
+            return (
+                <section className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden transition-all duration-300">
+                    <button 
+                        onClick={() => setIsOpen(!isOpen)}
+                        className={`w-full px-5 py-4 flex items-center justify-between bg-slate-50/50 hover:bg-slate-50 transition-colors ${!isOpen && 'border-b-0'}`}
+                    >
+                        <div className="flex items-center gap-3">
+                            <div className={`p-2 rounded-xl shadow-sm ${colorClass}`}>
+                                <Icon className="w-5 h-5 text-white" />
+                            </div>
+                            <h2 className="text-base font-bold text-slate-800">{title}</h2>
+                        </div>
+                        <div className="text-slate-400">
+                            {isOpen ? <ChevronUp className="w-5 h-5" /> : <ChevronDown className="w-5 h-5" />}
+                        </div>
+                    </button>
+                    {isOpen && <div className="p-5 border-t border-slate-100 animate-in">{children}</div>}
+                </section>
+            );
+        };
+
+        const App = () => {
+            const [basicInfo, setBasicInfo] = useState({
+                dept: '',
+                inspector: '',
+                surveyType: 'A：調査あり（2006年以前の建物で改造・修繕がある場合）',
+                surveyMethod: 'A.確認済証・建築確認通知書（築年数・㎡数・内装材確認）',
+                buildingAge: '',
+                structure: '選択してください',
+                fireproof: '選択してください',
+                floorArea: '',
+                floors: '',
+                contractor: ''
+            });
+
+            const [isCopied, setIsCopied] = useState(false);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const reportRef = useRef(null);
+
+            const surveyOptions = [
+                "A：調査あり（2006年以前の建物で改造・修繕がある場合）",
+                "B：調査なし（解体・改造・補修が発生しない・軽微な破損）",
+                "C：調査なし（2006年以降の建物）",
+                "D：調査なし（石・木・ガラス・金属・陶器・畳・照明のみ除去）",
+                "E：調査なし（塗装のみ作業）",
+                "F：調査なし（追加工事：B～Eに該当）"
+            ];
+
+            const surveyMethods = [
+                "A.確認済証・建築確認通知書（築年数・㎡数・内装材確認）",
+                "B.固定資産税（築年数・㎡数）",
+                "C.（マンション限定）インターネットなどによる情報取得",
+                "D.全部事項証明書を取得する（A・B・Cが取得できない場合）",
+                "E.書面調査不要（上記B～F、追加工事のため）"
+            ];
+
+            const materialsList = [
+                "仕上塗材", "ストレート波板", "屋根用化粧ストレート", "ケイ酸カルシウム板第一種",
+                "押出成形セメント板", "パルプセメント", "ビニル床タイル", "窯業系サイディング",
+                "石膏ボード", "ロックウール吸音天井板", 
+                "その他の材料（H26年以降の建物の内装(クロス・CF)は「みなし」とする）", 
+                "上記以外や判断が難しい場合（解体業者へ事前調査を委託 ※要委託費）"
+            ];
+
+            const [judgments, setJudgments] = useState(
+                materialsList.reduce((acc, curr) => {
+                    // 最後の特殊項目のみ初期値を「該当しない」にする
+                    if (curr.startsWith("上記以外")) {
+                        acc[curr] = '該当しない';
+                    } else {
+                        acc[curr] = '該当なし';
+                    }
+                    return acc;
+                }, {})
+            );
+
+            const [remarks, setRemarks] = useState('');
+            const isSurveyRequired = basicInfo.surveyType.startsWith('A');
+
+            // --- テキスト生成 (コピー用) ---
+            const generateReportText = () => {
+                let text = `【 アスベスト事前報告書 】\n`;
+                text += `作成日時: ${new Date().toLocaleDateString('ja-JP')} ${new Date().toLocaleTimeString('ja-JP')}\n`;
+                text += `------------------------------------------------------------\n\n`;
+                text += `■ 基本情報\n`;
+                text += `営業部署：${basicInfo.dept || '（未入力）'}\n`;
+                text += `調査者名：${basicInfo.inspector || '（未入力）'}\n`;
+                text += `事前調査：${basicInfo.surveyType}\n`;
+
+                if (isSurveyRequired) {
+                    text += `調査方法：${basicInfo.surveyMethod || '（未入力）'}\n`;
+                    text += `建築年数：${basicInfo.buildingAge || '（未入力）'}年\n`;
+                    text += `建物の構造：${basicInfo.structure === '選択してください' ? '（未選択）' : basicInfo.structure}\n`;
+                    text += `建物耐火：${basicInfo.fireproof === '選択してください' ? '（未選択）' : basicInfo.fireproof}\n`;
+                    text += `延床面積 (㎡)：${basicInfo.floorArea || '（未入力）'}\n`;
+                    text += `建物全体の階：${basicInfo.floors || '（未入力）'}\n`;
+                    text += `解体運搬回収予定業者：${basicInfo.contractor || '（未入力）'}\n\n`;
+
+                    text += `■ 判断項目（材料別判定）\n`;
+                    materialsList.forEach(name => {
+                        text += `・${name}：${judgments[name] || '該当なし'}\n`;
+                    });
+                } else {
+                    text += `\n※本案件は事前調査および材料判定の対象外です。\n\n`;
+                }
+                
+                text += `\n■ 備考\n${remarks || '特記事項なし'}`;
+                return text;
+            };
+
+            // PDFダウンロード (サイズ最適化・1ページ収め)
+            const handleDownloadPDF = async () => {
+                if (!window.html2pdf) {
+                    alert("PDF生成ライブラリを読み込み中です...");
+                    return;
+                }
+                setIsGenerating(true);
+                const element = reportRef.current;
+                const dateStr = new Date().toISOString().split('T')[0];
+                const filename = `アスベスト報告書_${dateStr}.pdf`;
+
+                // 余白を最小限にし、HTML2PDFの自動改ページを抑制する設定
+                const opt = {
+                    margin:       5, // 5mm
+                    filename:     filename,
+                    image:        { type: 'jpeg', quality: 1.0 },
+                    html2canvas:  { scale: 2, useCORS: true, letterRendering: true, scrollY: 0 },
+                    jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' },
+                    pagebreak:    { mode: 'avoid-all' } // 改ページを避ける
+                };
+
+                try {
+                    await window.html2pdf().set(opt).from(element).save();
+                } catch (error) {
+                    console.error("PDF Error:", error);
+                    alert("PDF保存に失敗しました。印刷機能を使用してください。");
+                } finally {
+                    setIsGenerating(false);
+                }
+            };
+
+            const handleCopy = () => {
+                const text = generateReportText();
+                const textArea = document.createElement("textarea");
+                textArea.value = text;
+                document.body.appendChild(textArea);
+                textArea.select();
+                document.execCommand("copy");
+                document.body.removeChild(textArea);
+                setIsCopied(true);
+                setTimeout(() => setIsCopied(false), 2000);
+            };
+
+            const today = new Date().toLocaleDateString('ja-JP', { year: 'numeric', month: '2-digit', day: '2-digit' });
+
+            return (
+                <div className="min-h-screen pb-32 md:pb-24 bg-slate-50">
+                    <div className="no-print fixed inset-0 pointer-events-none overflow-hidden opacity-30">
+                        <div className="absolute top-[-10%] right-[-10%] w-[50%] h-[50%] bg-blue-200 blur-[100px] rounded-full"></div>
+                    </div>
+
+                    <div className="relative max-w-3xl mx-auto px-4 md:px-6 pt-8 md:pt-12">
+                        <header className="no-print mb-8 text-center">
+                            <div className="inline-flex items-center gap-2 px-3 py-1 bg-white shadow-sm border border-slate-200 rounded-full mb-4">
+                                <span className="flex h-2 w-2 rounded-full bg-blue-500 animate-pulse"></span>
+                                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Asbestos DX</span>
+                            </div>
+                            <h1 className="text-2xl md:text-4xl font-black text-slate-900 mb-2">
+                                アスベスト<span className="text-blue-600">事前報告書</span>
+                            </h1>
+                            <p className="text-slate-500 text-xs md:text-sm">入力フォームのみのシンプル設計</p>
+                        </header>
+
+                        {/* --- 入力エリア --- */}
+                        <div className="no-print input-container space-y-4">
+                            <Section title="基本情報" icon={Building2} colorClass="bg-slate-800">
+                                <div className="space-y-4">
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-500">営業部署</label>
+                                            <input type="text" placeholder="例: 東京第一営業部" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                                                value={basicInfo.dept} onChange={(e) => setBasicInfo({...basicInfo, dept: e.target.value})} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-500">調査者名</label>
+                                            <input type="text" placeholder="例: 山田 太郎" className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 focus:ring-2 focus:ring-blue-100 outline-none"
+                                                value={basicInfo.inspector} onChange={(e) => setBasicInfo({...basicInfo, inspector: e.target.value})} />
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-xs font-bold text-slate-500">事前調査種別</label>
+                                        <div className="relative">
+                                            <select className="w-full px-4 py-3 bg-slate-900 text-white rounded-xl outline-none appearance-none font-bold text-sm leading-relaxed"
+                                                value={basicInfo.surveyType} onChange={(e) => setBasicInfo({...basicInfo, surveyType: e.target.value})}>
+                                                {surveyOptions.map(opt => <option key={opt} value={opt} className="bg-white text-slate-800">{opt}</option>)}
+                                            </select>
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 text-white/50 pointer-events-none"><ChevronDown /></div>
+                                        </div>
+                                    </div>
+
+                                    {isSurveyRequired ? (
+                                        <div className="mt-4 p-4 bg-blue-50/50 border border-blue-100 rounded-xl space-y-4 animate-in">
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-blue-600">調査方法</label>
+                                                <select className="w-full px-3 py-3 bg-white border border-blue-100 rounded-lg outline-none text-sm break-words"
+                                                    value={basicInfo.surveyMethod} onChange={(e) => setBasicInfo({...basicInfo, surveyMethod: e.target.value})}>
+                                                    {surveyMethods.map(method => <option key={method} value={method}>{method}</option>)}
+                                                </select>
+                                            </div>
+                                            <div className="grid grid-cols-2 gap-3">
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-blue-600">建築年数</label>
+                                                    <input type="number" placeholder="20" className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg"
+                                                        value={basicInfo.buildingAge} onChange={(e) => setBasicInfo({...basicInfo, buildingAge: e.target.value})} />
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-blue-600">延床面積 (㎡)</label>
+                                                    <input type="text" placeholder="1250" className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg"
+                                                        value={basicInfo.floorArea} onChange={(e) => setBasicInfo({...basicInfo, floorArea: e.target.value})} />
+                                                </div>
+                                            </div>
+                                            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-blue-600">構造</label>
+                                                    <select className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg"
+                                                        value={basicInfo.structure} onChange={(e) => setBasicInfo({...basicInfo, structure: e.target.value})}>
+                                                        <option>選択してください</option><option>木造</option><option>鉄骨造</option><option>鉄筋コンクリート造</option>
+                                                    </select>
+                                                </div>
+                                                <div className="space-y-1">
+                                                    <label className="text-xs font-bold text-blue-600">耐火</label>
+                                                    <select className="w-full px-3 py-2 bg-white border border-blue-100 rounded-lg"
+                                                        value={basicInfo.fireproof} onChange={(e) => setBasicInfo({...basicInfo, fireproof: e.target.value})}>
+                                                        <option>選択してください</option><option>耐火構造</option><option>準耐火構造</option><option>その他</option>
+                                                    </select>
+                                                </div>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-xs font-bold text-blue-600">解体業者</label>
+                                                <div className="relative">
+                                                    <input type="text" placeholder="株式会社〇〇環境" className="w-full pl-9 pr-4 py-2 bg-white border border-blue-100 rounded-lg"
+                                                        value={basicInfo.contractor} onChange={(e) => setBasicInfo({...basicInfo, contractor: e.target.value})} />
+                                                    <div className="absolute left-3 top-1/2 -translate-y-1/2 text-blue-300"><HardHat className="w-4 h-4" /></div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    ) : (
+                                        <div className="p-4 bg-amber-50 border border-amber-100 rounded-xl flex gap-3 text-amber-800 text-sm">
+                                            <AlertCircle className="w-5 h-5 shrink-0" />
+                                            <p>調査不要のため、詳細入力はスキップされます。</p>
+                                        </div>
+                                    )}
+                                </div>
+                            </Section>
+
+                            {isSurveyRequired && (
+                                <Section title="材料別判定" icon={CheckCircle2} colorClass="bg-emerald-500">
+                                    <div className="space-y-3">
+                                        {materialsList.map((material) => {
+                                            // 最後の項目かどうかを判定
+                                            const isSpecialLastItem = material.startsWith("上記以外");
+                                            
+                                            return (
+                                                <div key={material} className="p-3 bg-slate-50 border border-slate-100 rounded-xl">
+                                                    <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+                                                        <span className="text-sm font-bold text-slate-700">{material}</span>
+                                                        <select 
+                                                            className={`w-full md:w-auto px-3 py-2 rounded-lg text-sm font-bold outline-none border ${
+                                                                (judgments[material] === '該当なし' || judgments[material] === '該当しない') 
+                                                                ? 'bg-white border-slate-200 text-slate-400' 
+                                                                : 'bg-blue-600 border-blue-600 text-white'
+                                                            }`}
+                                                            value={judgments[material]}
+                                                            onChange={(e) => setJudgments({...judgments, [material]: e.target.value})}
+                                                        >
+                                                            {isSpecialLastItem ? (
+                                                                <>
+                                                                    <option className="text-slate-800">該当しない</option>
+                                                                    <option className="text-slate-800">該当する</option>
+                                                                </>
+                                                            ) : (
+                                                                <>
+                                                                    <option className="text-slate-800">該当なし</option>
+                                                                    <option className="text-slate-800">みなし</option>
+                                                                    <option className="text-slate-800">石綿含有</option>
+                                                                    <option className="text-slate-800">石綿含まない</option>
+                                                                </>
+                                                            )}
+                                                        </select>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </Section>
+                            )}
+
+                            <Section title="備考" icon={FileText} colorClass="bg-slate-400" isOpenDefault={false}>
+                                <textarea 
+                                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:border-blue-500 outline-none h-32 text-sm"
+                                    placeholder="特記事項があれば入力してください"
+                                    value={remarks}
+                                    onChange={(e) => setRemarks(e.target.value)}
+                                ></textarea>
+                            </Section>
+
+                            <div className="hidden md:grid grid-cols-2 gap-4 mt-8">
+                                <button onClick={handleDownloadPDF} disabled={isGenerating} className={`col-span-2 flex items-center justify-center gap-3 px-6 py-4 rounded-xl font-bold text-white shadow-lg transition-all active:scale-[0.98] ${isGenerating ? 'bg-slate-300' : 'bg-blue-600 hover:bg-blue-700'}`}>
+                                    {isGenerating ? 'PDF生成中...' : <><Download className="w-5 h-5" /> 報告書をPDFとして保存</>}
+                                </button>
+                                <button onClick={handleCopy} className="flex items-center justify-center gap-2 py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl active:scale-[0.98]">
+                                    {isCopied ? <span className="text-emerald-500 flex gap-1"><Check className="w-5 h-5"/> 完了</span> : <><Clipboard className="w-5 h-5" /> コピー</>}
+                                </button>
+                                <button onClick={() => window.print()} className="flex items-center justify-center gap-2 py-3 bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 font-bold rounded-xl active:scale-[0.98]">
+                                    <Printer className="w-5 h-5" /> 印刷
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* --- 隠し要素：PDF生成用 (1ページ収縮レイアウト) --- */}
+                    <div className="off-screen-render">
+                        <div 
+                            ref={reportRef}
+                            className="report-sheet bg-white mx-auto shadow-sm w-full box-border text-slate-900"
+                            style={{ padding: '0', fontSize: '10pt' }} 
+                        >
+                            <div className="border-b-2 border-slate-800 pb-2 mb-2">
+                                <h1 className="text-xl font-bold text-center mb-1">アスベスト事前報告書</h1>
+                                <p className="text-right text-[10px] text-slate-500">作成日: {today}</p>
+                            </div>
+
+                            <div className="mb-2">
+                                <h2 className="bg-slate-100 border-l-4 border-slate-700 px-2 py-1 font-bold text-xs mb-1">■ 基本情報</h2>
+                                
+                                <div className="border-t border-slate-300">
+                                    <div className="report-grid">
+                                        <div className="report-grid-label">営業部署</div>
+                                        <div className="report-grid-value">{basicInfo.dept || '（未入力）'}</div>
+                                    </div>
+                                    <div className="report-grid">
+                                        <div className="report-grid-label">調査者名</div>
+                                        <div className="report-grid-value">{basicInfo.inspector || '（未入力）'}</div>
+                                    </div>
+                                    <div className="report-grid">
+                                        <div className="report-grid-label">事前調査</div>
+                                        <div className="report-grid-value text-[9px] leading-tight">{basicInfo.surveyType}</div>
+                                    </div>
+                                </div>
+
+                                {isSurveyRequired && (
+                                    <div className="border-t border-slate-300 mt-1">
+                                        <div className="report-grid">
+                                            <div className="report-grid-label">調査方法</div>
+                                            <div className="report-grid-value text-[9px] leading-tight">{basicInfo.surveyMethod}</div>
+                                        </div>
+                                        <div className="grid grid-cols-2">
+                                            <div className="report-grid" style={{ gridTemplateColumns: '130px 1fr' }}>
+                                                <div className="report-grid-label">建築年数</div>
+                                                <div className="report-grid-value">{basicInfo.buildingAge ? `${basicInfo.buildingAge}年` : '（未入力）'}</div>
+                                            </div>
+                                            <div className="report-grid" style={{ gridTemplateColumns: '80px 1fr' }}>
+                                                <div className="report-grid-label">延床面積</div>
+                                                <div className="report-grid-value">{basicInfo.floorArea ? `${basicInfo.floorArea}㎡` : '（未入力）'}</div>
+                                            </div>
+                                        </div>
+                                        <div className="grid grid-cols-2">
+                                            <div className="report-grid" style={{ gridTemplateColumns: '130px 1fr' }}>
+                                                <div className="report-grid-label">建物の構造</div>
+                                                <div className="report-grid-value">{basicInfo.structure === '選択してください' ? '（未選択）' : basicInfo.structure}</div>
+                                            </div>
+                                            <div className="report-grid" style={{ gridTemplateColumns: '80px 1fr' }}>
+                                                <div className="report-grid-label">建物耐火</div>
+                                                <div className="report-grid-value">{basicInfo.fireproof === '選択してください' ? '（未選択）' : basicInfo.fireproof}</div>
+                                            </div>
+                                        </div>
+                                        <div className="report-grid">
+                                            <div className="report-grid-label">解体業者</div>
+                                            <div className="report-grid-value">{basicInfo.contractor || '（未入力）'}</div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {isSurveyRequired && (
+                                <div className="mb-2">
+                                    <h2 className="bg-slate-100 border-l-4 border-slate-700 px-2 py-1 font-bold text-xs mb-1">■ 判断項目（材料別判定）</h2>
+                                    <div className="border-t border-slate-300">
+                                        {materialsList.map((material, idx) => {
+                                            const isSpecialLastItem = material.startsWith("上記以外");
+                                            const isEmpty = isSpecialLastItem ? judgments[material] === '該当しない' : judgments[material] === '該当なし';
+                                            
+                                            return (
+                                                <div key={material} className="report-grid" style={{ borderBottom: '1px solid #cbd5e1', gridTemplateColumns: '60% 1fr' }}>
+                                                    <div className="report-grid-label">{material}</div>
+                                                    <div className="report-grid-value font-bold">
+                                                        {!isEmpty && <span className="inline-block w-2 h-2 rounded-full bg-slate-800 mr-2"></span>}
+                                                        {judgments[material]}
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            )}
+
+                            {!isSurveyRequired && (
+                                <div className="mb-2 p-4 border-2 border-dashed border-slate-300 rounded-lg text-center text-slate-500 text-xs">
+                                    ※ 本案件は事前調査および材料判定の対象外です。
+                                </div>
+                            )}
+
+                            <div>
+                                <h2 className="bg-slate-100 border-l-4 border-slate-700 px-2 py-1 font-bold text-xs mb-1">■ 備考</h2>
+                                <div className="border border-slate-200 rounded p-2 min-h-[60px] text-[9px] whitespace-pre-wrap">
+                                    {remarks || '特記事項なし'}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="no-print md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-slate-200 px-4 py-3 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50 safe-area-bottom">
+                        <button 
+                            onClick={handleDownloadPDF} 
+                            disabled={isGenerating}
+                            className={`w-full flex items-center justify-center gap-2 py-3.5 font-bold rounded-xl text-white shadow-md active:scale-95 ${isGenerating ? 'bg-slate-300' : 'bg-blue-600'}`}
+                        >
+                            {isGenerating ? '生成中...' : <><Download className="w-5 h-5" /> 報告書をPDFで保存</>}
+                        </button>
+                    </div>
+                    
+                    <style>{`
+                        .safe-area-bottom {
+                            padding-bottom: env(safe-area-inset-bottom, 20px);
+                        }
+                    `}</style>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
